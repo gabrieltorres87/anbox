@@ -52,12 +52,11 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Configure Android SDK paths
+      - name: Configure Android SDK
         shell: bash
         run: |
           set -e
 
-          mkdir -p "$ANDROID_SDK_ROOT"
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
 
           echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
@@ -99,23 +98,17 @@ jobs:
         run: |
           set -e
 
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          echo "ANDROID_HOME=$ANDROID_HOME"
-
           command -v sdkmanager
           command -v avdmanager
 
-          echo "sdkmanager version:"
           sdkmanager --version
-
-          echo "avdmanager version:"
           avdmanager version || true
 
       - name: Accept Android SDK licenses
         shell: bash
         run: |
-          # sdkmanager exits successfully after accepting licenses.
-          # The yes process can then receive SIGPIPE, so pipefail must be disabled.
+          # sdkmanager finishes before yes does, causing yes to receive SIGPIPE.
+          # Disable pipefail so that expected Broken pipe output does not fail the job.
           set +o pipefail
 
           yes | sdkmanager \
@@ -136,7 +129,7 @@ jobs:
             "platforms;android-35" \
             "system-images;android-35;google_apis;x86_64"
 
-      - name: Verify installed Android packages
+      - name: Verify Android SDK packages
         shell: bash
         run: |
           set -e
@@ -147,7 +140,9 @@ jobs:
 
           test -x "$ANDROID_SDK_ROOT/platform-tools/adb"
           test -x "$ANDROID_SDK_ROOT/emulator/emulator"
-          test -d "$ANDROID_SDK_ROOT/system-images/android-35/google_apis/x86_64"
+
+          test -d \
+            "$ANDROID_SDK_ROOT/system-images/android-35/google_apis/x86_64"
 
       - name: Create Android Virtual Device
         shell: bash
@@ -159,19 +154,21 @@ jobs:
           rm -rf "$HOME/.android/avd/github-emulator.avd"
           rm -f "$HOME/.android/avd/github-emulator.ini"
 
+          # Do not pass --sdk_root here.
+          # avdmanager uses ANDROID_SDK_ROOT from the job environment.
           echo "no" | avdmanager create avd \
             --name "github-emulator" \
             --package "system-images;android-35;google_apis;x86_64" \
             --device "pixel_6" \
-            --force \
-            --sdk_root="$ANDROID_SDK_ROOT"
+            --force
 
       - name: Verify Android Virtual Device
         shell: bash
         run: |
+          set -e
           avdmanager list avd
 
-      - name: Start Xvfb virtual display
+      - name: Start Xvfb display
         shell: bash
         run: |
           Xvfb "$DISPLAY" \
@@ -317,15 +314,11 @@ jobs:
           echo "Android emulator is running."
           echo "noVNC URL: $NOVNC_URL"
 
-          # Add your tests here.
+          # Add tests here, for example:
           #
-          # Example:
           # ./gradlew connectedDebugAndroidTest
           #
-          # Install an APK:
           # adb install app/build/outputs/apk/debug/app-debug.apk
-          #
-          # Launch an application:
           # adb shell am start -n com.example.app/.MainActivity
 
       - name: Keep emulator alive
