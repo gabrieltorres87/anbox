@@ -11,9 +11,10 @@ jobs:
     env:
       ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
       ANDROID_HOME: ${{ github.workspace }}/android-sdk
+      ANDROID_USER_HOME: ${{ github.workspace }}/android-user
+      ANDROID_AVD_HOME: ${{ github.workspace }}/android-user/avd
       DISPLAY: :99
       AVD_NAME: github-emulator
-      ADB_TARGET: emulator-5554
 
     steps:
       - name: Checkout repository
@@ -35,7 +36,6 @@ jobs:
             x11vnc \
             x11-utils \
             fluxbox \
-            openjdk-17-jre \
             libpulse0 \
             libglu1-mesa \
             libnss3 \
@@ -53,7 +53,7 @@ jobs:
             libxcb-xinerama0 \
             libxcb-shape0
 
-      - name: Configure Java
+      - name: Install Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -70,23 +70,21 @@ jobs:
           echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
           echo "$ANDROID_SDK_ROOT/emulator" >> "$GITHUB_PATH"
 
-          cat >> "$GITHUB_ENV" <<EOF
-          PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator:$PATH
-          EOF
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_USER_HOME=$ANDROID_USER_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
 
       - name: Install Android command-line tools
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          CMDLINE_VERSION="11076708"
-          CMDLINE_URL="https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_VERSION}_latest.zip"
-
           rm -rf /tmp/android-cmdline-tools
           mkdir -p /tmp/android-cmdline-tools
 
           wget --no-verbose \
-            "$CMDLINE_URL" \
+            "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
             -O /tmp/android-cmdline-tools.zip
 
           unzip -q \
@@ -130,7 +128,7 @@ jobs:
             "platforms;android-35" \
             "system-images;android-35;google_apis;x86_64"
 
-      - name: Verify Android SDK packages
+      - name: Verify Android SDK
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -140,12 +138,9 @@ jobs:
           test -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
           test -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
 
-          sdkmanager \
-            --sdk_root="$ANDROID_SDK_ROOT" \
-            --list_installed
-
-          emulator -version
           adb version
+          emulator -version
+          sdkmanager --list_installed
 
       - name: Check KVM acceleration
         shell: bash
@@ -154,7 +149,7 @@ jobs:
             echo "KVM acceleration is available"
             ls -l /dev/kvm
           else
-            echo "::warning::/dev/kvm is unavailable. Emulator startup may be slow."
+            echo "::warning::/dev/kvm is unavailable; emulator startup may be slow"
           fi
 
       - name: Create Android Virtual Device
@@ -162,10 +157,14 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          mkdir -p "$HOME/.android/avd"
+          mkdir -p "$ANDROID_USER_HOME"
+          mkdir -p "$ANDROID_AVD_HOME"
 
-          rm -rf "$HOME/.android/avd/${AVD_NAME}.avd"
-          rm -f "$HOME/.android/avd/${AVD_NAME}.ini"
+          rm -rf "$ANDROID_AVD_HOME/${AVD_NAME}.avd"
+          rm -f "$ANDROID_AVD_HOME/${AVD_NAME}.ini"
+
+          echo "Creating AVD in:"
+          echo "$ANDROID_AVD_HOME"
 
           echo "no" | avdmanager create avd \
             --name "$AVD_NAME" \
@@ -173,7 +172,20 @@ jobs:
             --device "pixel_6" \
             --force
 
-          AVD_CONFIG="$HOME/.android/avd/${AVD_NAME}.avd/config.ini"
+          AVD_DIR="$ANDROID_AVD_HOME/${AVD_NAME}.avd"
+          AVD_CONFIG="$AVD_DIR/config.ini"
+
+          if [[ ! -d "$AVD_DIR" ]]; then
+            echo "AVD directory was not created"
+            find "$ANDROID_USER_HOME" -maxdepth 5 -print || true
+            exit 1
+          fi
+
+          if [[ ! -f "$AVD_CONFIG" ]]; then
+            echo "AVD config was not created"
+            find "$ANDROID_USER_HOME" -maxdepth 5 -print || true
+            exit 1
+          fi
 
           cat >> "$AVD_CONFIG" <<'EOF'
           hw.keyboard=yes
@@ -191,14 +203,15 @@ jobs:
           skin.dynamic=yes
           EOF
 
+          echo "AVD created successfully"
+          ls -la "$AVD_DIR"
+
           avdmanager list avd
 
       - name: Start Xvfb display
         shell: bash
         run: |
           set -Eeuo pipefail
-
-          pkill Xvfb || true
 
           Xvfb "$DISPLAY" \
             -screen 0 1280x800x24 \
@@ -208,8 +221,7 @@ jobs:
             -noreset \
             > /tmp/xvfb.log 2>&1 &
 
-          XVFB_PID=$!
-          echo "XVFB_PID=$XVFB_PID" >> "$GITHUB_ENV"
+          echo "XVFB_PID=$!" >> "$GITHUB_ENV"
 
           sleep 3
 
@@ -219,18 +231,16 @@ jobs:
             exit 1
           fi
 
-          echo "Xvfb display $DISPLAY is ready"
+          echo "Xvfb is ready on $DISPLAY"
 
       - name: Start window manager
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          fluxbox \
-            > /tmp/fluxbox.log 2>&1 &
+          fluxbox > /tmp/fluxbox.log 2>&1 &
 
-          FLUXBOX_PID=$!
-          echo "FLUXBOX_PID=$FLUXBOX_PID" >> "$GITHUB_ENV"
+          echo "FLUXBOX_PID=$!" >> "$GITHUB_ENV"
 
           sleep 2
 
@@ -239,12 +249,13 @@ jobs:
         run: |
           set -Eeuo pipefail
 
+          if [[ ! -d "$ANDROID_AVD_HOME/${AVD_NAME}.avd" ]]; then
+            echo "AVD directory does not exist"
+            find "$ANDROID_USER_HOME" -maxdepth 5 -print || true
+            exit 1
+          fi
+
           adb start-server
-
-          pkill -f "emulator.*${AVD_NAME}" || true
-          pkill -f "qemu-system" || true
-
-          echo "Starting emulator..."
 
           emulator \
             -avd "$AVD_NAME" \
@@ -323,8 +334,6 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          pkill x11vnc || true
-
           x11vnc \
             -display "$DISPLAY" \
             -rfbport 5900 \
@@ -345,7 +354,7 @@ jobs:
             exit 1
           fi
 
-          echo "VNC server is running on port 5900"
+          echo "VNC server is running"
 
       - name: Install and start noVNC
         shell: bash
@@ -381,12 +390,12 @@ jobs:
             --max-time 10 \
             http://127.0.0.1:6080/vnc.html \
             >/dev/null; then
-            echo "noVNC HTTP endpoint is unavailable"
+            echo "noVNC is unavailable"
             cat /tmp/novnc.log
             exit 1
           fi
 
-          echo "noVNC is running on port 6080"
+          echo "noVNC is running"
 
       - name: Install Cloudflare Tunnel
         shell: bash
@@ -430,7 +439,7 @@ jobs:
             fi
 
             if ! kill -0 "$CLOUDFLARED_PID" 2>/dev/null; then
-              echo "Cloudflare Tunnel stopped unexpectedly"
+              echo "Cloudflare Tunnel stopped"
               cat /tmp/cloudflared.log
               exit 1
             fi
@@ -463,7 +472,7 @@ jobs:
           echo "Android emulator is running"
           echo "noVNC URL: $NOVNC_URL"
 
-          # Add Android tests here.
+          # Add tests here.
           #
           # Example:
           # ./gradlew connectedDebugAndroidTest
@@ -498,7 +507,8 @@ jobs:
               exit 1
             fi
 
-            if ! kill -0 "${CLOUDFLARED_PID:-0}" 2>/dev/null; then
+            if [[ -n "${CLOUDFLARED_PID:-}" ]] &&
+               ! kill -0 "$CLOUDFLARED_PID" 2>/dev/null; then
               echo "Cloudflare Tunnel stopped"
               exit 1
             fi
