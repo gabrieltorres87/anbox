@@ -499,7 +499,7 @@ jobs:
             echo "Open noVNC:"
             echo
             echo "$NOVNC_URL"
-          } >> "$GITHUB_STEP_SUMMARY
+          } >> "$GITHUB_STEP_SUMMARY"
 
           echo "noVNC URL: $NOVNC_URL"
 
