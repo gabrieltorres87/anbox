@@ -183,7 +183,7 @@ jobs:
 
           emulator \
             -avd "$AVD_NAME" \
-            -accel off \
+            -accel auto \
             -gpu swiftshader_indirect \
             -no-audio \
             -no-boot-anim \
