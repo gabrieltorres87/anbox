@@ -1,0 +1,157 @@
+name: Android Emulator noVNC
+
+on:
+  workflow_dispatch:
+
+jobs:
+  emulator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            wget unzip xvfb x11vnc fluxbox curl
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android emulator
+        run: |
+          sdkmanager "platform-tools" \
+            "emulator" \
+            "platforms;android-35" \
+            "system-images;android-35;google_apis;x86_64"
+
+          echo "no" | sdkmanager --licenses
+
+      - name: Create AVD
+        run: |
+          echo "no" | avdmanager create avd \
+            --name test \
+            --package "system-images;android-35;google_apis;x86_64" \
+            --device "pixel_6" \
+            --force
+
+      - name: Start virtual display
+        run: |
+          export DISPLAY=:99
+
+          Xvfb :99 \
+            -screen 0 1280x800x24 \
+            -ac +extension GLX \
+            +render \
+            -noreset > /tmp/xvfb.log 2>&1 &
+
+          sleep 2
+
+          fluxbox > /tmp/fluxbox.log 2>&1 &
+
+      - name: Start Android Emulator
+        env:
+          DISPLAY: :99
+        run: |
+          nohup emulator \
+            -avd test \
+            -no-snapshot \
+            -no-audio \
+            -no-boot-anim \
+            -gpu swiftshader_indirect \
+            -camera-back none \
+            > /tmp/emulator.log 2>&1 &
+
+          adb wait-for-device
+
+          timeout 300 bash -c '
+            until adb shell getprop sys.boot_completed 2>/dev/null | grep -m 1 "1"; do
+              sleep 5
+            done
+          '
+
+          adb shell settings put global window_animation_scale 0
+          adb shell settings put global transition_animation_scale 0
+          adb shell settings put global animator_duration_scale 0
+
+      - name: Start VNC server
+        env:
+          DISPLAY: :99
+        run: |
+          x11vnc \
+            -display :99 \
+            -forever \
+            -shared \
+            -rfbport 5900 \
+            -nopw \
+            > /tmp/x11vnc.log 2>&1 &
+
+          sleep 2
+
+      - name: Install and start noVNC
+        run: |
+          git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
+
+          /tmp/noVNC/utils/novnc_proxy \
+            --vnc localhost:5900 \
+            --listen 6080 \
+            > /tmp/novnc.log 2>&1 &
+
+          sleep 3
+
+      - name: Install Cloudflare Tunnel
+        run: |
+          wget -q \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -O /tmp/cloudflared
+
+          chmod +x /tmp/cloudflared
+
+      - name: Create public noVNC URL
+        run: |
+          /tmp/cloudflared tunnel \
+            --url http://127.0.0.1:6080 \
+            --no-autoupdate \
+            > /tmp/cloudflared.log 2>&1 &
+
+          for i in {1..30}; do
+            URL=$(grep -o 'https://[-a-z0-9]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)
+
+            if [ -n "$URL" ]; then
+              echo "noVNC URL: $URL/vnc.html"
+              echo "NOVNC_URL=$URL/vnc.html" >> "$GITHUB_ENV"
+              break
+            fi
+
+            sleep 2
+          done
+
+          if [ -z "${URL:-}" ]; then
+            cat /tmp/cloudflared.log
+            exit 1
+          fi
+
+      - name: Keep emulator available
+        run: |
+          echo "Open the noVNC URL printed above."
+          echo "The emulator will remain available while this job is running."
+
+          for i in {1..330}; do
+            sleep 10
+          done
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-emulator-logs
+          path: /tmp/*.log
