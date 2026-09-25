@@ -52,6 +52,14 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Configure Android SDK paths
+        run: |
+          mkdir -p "$ANDROID_SDK_ROOT"
+
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_SDK_ROOT/emulator" >> "$GITHUB_PATH"
+
       - name: Install Android command-line tools
         run: |
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
@@ -60,21 +68,20 @@ jobs:
             "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
             -O /tmp/android-cmdline-tools.zip
 
-          unzip -q /tmp/android-cmdline-tools.zip \
+          unzip -q \
+            /tmp/android-cmdline-tools.zip \
             -d "$ANDROID_SDK_ROOT/cmdline-tools"
 
           mv \
             "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" \
             "$ANDROID_SDK_ROOT/cmdline-tools/latest"
 
-          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
-          echo "$ANDROID_SDK_ROOT/emulator" >> "$GITHUB_PATH"
+          test -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
 
-      - name: Verify Android tools
+      - name: Verify Android command-line tools
         run: |
           sdkmanager --version
-          java -version
+          avdmanager --help
 
       - name: Accept Android licenses
         run: |
@@ -91,15 +98,27 @@ jobs:
             "platforms;android-35" \
             "system-images;android-35;google_apis;x86_64"
 
+      - name: Verify installed SDK packages
+        run: |
+          sdkmanager \
+            --sdk_root="$ANDROID_SDK_ROOT" \
+            --list_installed
+
+          test -d \
+            "$ANDROID_SDK_ROOT/system-images/android-35/google_apis/x86_64"
+
       - name: Create Android Virtual Device
         run: |
-          echo "no" | avdmanager \
-            --sdk_root="$ANDROID_SDK_ROOT" \
-            create avd \
-            --force \
+          echo "no" | avdmanager create avd \
             --name "github-emulator" \
             --package "system-images;android-35;google_apis;x86_64" \
-            --device "pixel_6"
+            --device "pixel_6" \
+            --force \
+            --sdk_root="$ANDROID_SDK_ROOT"
+
+      - name: Verify Android Virtual Device
+        run: |
+          avdmanager list avd
 
       - name: Start Xvfb virtual display
         run: |
@@ -115,9 +134,7 @@ jobs:
 
       - name: Start window manager
         run: |
-          fluxbox \
-            > /tmp/fluxbox.log 2>&1 &
-
+          fluxbox > /tmp/fluxbox.log 2>&1 &
           sleep 2
 
       - name: Start Android Emulator
@@ -146,6 +163,12 @@ jobs:
           adb shell settings put global animator_duration_scale 0
 
           echo "Android emulator is ready"
+
+      - name: Show emulator information
+        run: |
+          adb devices
+          adb shell getprop ro.build.version.release
+          adb shell wm size
 
       - name: Start VNC server
         run: |
@@ -189,46 +212,48 @@ jobs:
             > /tmp/cloudflared.log 2>&1 &
 
           for i in {1..30}; do
-            NOVNC_URL=$(grep -oE 'https://[-a-zA-Z0-9]+\.trycloudflare\.com' \
+            PUBLIC_URL=$(grep -oE \
+              'https://[-a-zA-Z0-9]+\.trycloudflare\.com' \
               /tmp/cloudflared.log | head -n 1 || true)
 
-            if [ -n "$NOVNC_URL" ]; then
+            if [ -n "$PUBLIC_URL" ]; then
               echo
               echo "=============================================="
               echo "Open this URL in your browser:"
-              echo "$NOVNC_URL/vnc.html"
+              echo "$PUBLIC_URL/vnc.html"
               echo "=============================================="
               echo
 
-              echo "NOVNC_URL=$NOVNC_URL/vnc.html" >> "$GITHUB_ENV"
+              echo "NOVNC_URL=$PUBLIC_URL/vnc.html" >> "$GITHUB_ENV"
               break
             fi
 
             sleep 2
           done
 
-          if [ -z "${NOVNC_URL:-}" ]; then
-            echo "Cloudflare Tunnel did not start"
+          if [ -z "${PUBLIC_URL:-}" ]; then
+            echo "Cloudflare Tunnel failed to start"
             cat /tmp/cloudflared.log
             exit 1
           fi
 
-      - name: Run tests
+      - name: Run Android tests
         run: |
-          # Put your Android tests here.
-          #
-          # Examples:
-          # adb install app/build/outputs/apk/debug/app-debug.apk
-          # adb shell am start -n com.example/.MainActivity
-          # ./gradlew connectedDebugAndroidTest
+          echo "Android emulator is running."
+          echo "noVNC URL: $NOVNC_URL"
 
-          echo "Emulator is available at:"
-          echo "$NOVNC_URL"
+          # Add your tests here, for example:
+          #
+          # ./gradlew connectedDebugAndroidTest
+          #
+          # Or install and launch an APK:
+          # adb install app/build/outputs/apk/debug/app-debug.apk
+          # adb shell am start -n com.example.app/.MainActivity
 
       - name: Keep emulator alive
         run: |
-          echo "The emulator will remain available for approximately 45 minutes."
-          echo "noVNC URL: $NOVNC_URL"
+          echo "Open the following URL while this job is running:"
+          echo "$NOVNC_URL"
 
           for i in {1..270}; do
             sleep 10
