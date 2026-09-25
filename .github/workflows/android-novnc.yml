@@ -52,7 +52,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Configure Android SDK directories
+      - name: Configure Android SDK paths
         shell: bash
         run: |
           set -e
@@ -91,11 +91,8 @@ jobs:
             "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
             "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
 
-          test -x \
-            "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-
-          test -x \
-            "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
+          test -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
 
       - name: Verify Android command-line tools
         shell: bash
@@ -117,9 +114,15 @@ jobs:
       - name: Accept Android SDK licenses
         shell: bash
         run: |
+          # sdkmanager exits successfully after accepting licenses.
+          # The yes process can then receive SIGPIPE, so pipefail must be disabled.
+          set +o pipefail
+
           yes | sdkmanager \
             --sdk_root="$ANDROID_SDK_ROOT" \
             --licenses
+
+          echo "Android SDK licenses accepted"
 
       - name: Install Android SDK packages
         shell: bash
@@ -150,6 +153,8 @@ jobs:
         shell: bash
         run: |
           set -e
+
+          mkdir -p "$HOME/.android/avd"
 
           rm -rf "$HOME/.android/avd/github-emulator.avd"
           rm -f "$HOME/.android/avd/github-emulator.ini"
@@ -312,13 +317,15 @@ jobs:
           echo "Android emulator is running."
           echo "noVNC URL: $NOVNC_URL"
 
-          # Add your application tests here.
+          # Add your tests here.
           #
           # Example:
           # ./gradlew connectedDebugAndroidTest
           #
-          # Or:
+          # Install an APK:
           # adb install app/build/outputs/apk/debug/app-debug.apk
+          #
+          # Launch an application:
           # adb shell am start -n com.example.app/.MainActivity
 
       - name: Keep emulator alive
