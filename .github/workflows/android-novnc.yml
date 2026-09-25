@@ -21,37 +21,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Linux dependencies
-        shell: bash
         run: |
           set -Eeuo pipefail
-
           sudo apt-get update
-
           sudo apt-get install -y \
-            wget \
-            curl \
-            unzip \
-            git \
-            xvfb \
-            x11vnc \
-            x11-utils \
-            fluxbox \
-            libpulse0 \
-            libglu1-mesa \
-            libnss3 \
-            libxcomposite1 \
-            libxcursor1 \
-            libxi6 \
-            libxrandr2 \
-            libxtst6 \
-            libxdamage1 \
-            libxfixes3 \
-            libxcb1 \
-            libxcb-cursor0 \
-            libxcb-keysyms1 \
-            libxcb-render-util0 \
-            libxcb-xinerama0 \
-            libxcb-shape0
+            wget curl unzip git xvfb x11vnc x11-utils fluxbox \
+            libpulse0 libglu1-mesa libnss3 libxcomposite1 libxcursor1 \
+            libxi6 libxrandr2 libxtst6 libxdamage1 libxfixes3 libxcb1 \
+            libxcb-cursor0 libxcb-keysyms1 libxcb-render-util0 \
+            libxcb-xinerama0 libxcb-shape0
 
       - name: Install Java
         uses: actions/setup-java@v4
@@ -59,8 +37,7 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Configure Android SDK paths
-        shell: bash
+      - name: Configure Android paths
         run: |
           set -Eeuo pipefail
 
@@ -75,15 +52,7 @@ jobs:
             echo "$ANDROID_SDK_ROOT/emulator"
           } >> "$GITHUB_PATH"
 
-          {
-            echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-            echo "ANDROID_HOME=$ANDROID_HOME"
-            echo "ANDROID_USER_HOME=$ANDROID_USER_HOME"
-            echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME"
-          } >> "$GITHUB_ENV"
-
       - name: Install Android command-line tools
-        shell: bash
         run: |
           set -Eeuo pipefail
 
@@ -105,24 +74,15 @@ jobs:
             /tmp/android-cmdline-tools/cmdline-tools/. \
             "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
 
-          chmod +x \
-            "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-            "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
-
-          sdkmanager --version
-          avdmanager version || true
-
-      - name: Accept Android SDK licenses
+      - name: Accept Android licenses
         shell: bash
         run: |
           set +o pipefail
-
           yes | sdkmanager \
             --sdk_root="$ANDROID_SDK_ROOT" \
             --licenses
 
       - name: Install Android SDK packages
-        shell: bash
         run: |
           set -Eeuo pipefail
 
@@ -134,36 +94,22 @@ jobs:
             "system-images;android-35;google_apis;x86_64"
 
       - name: Verify Android SDK
-        shell: bash
         run: |
           set -Eeuo pipefail
 
           test -x "$ANDROID_SDK_ROOT/platform-tools/adb"
           test -x "$ANDROID_SDK_ROOT/emulator/emulator"
-          test -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          test -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
 
           adb version
           emulator -version
           sdkmanager --list_installed
-
-      - name: Check KVM acceleration
-        shell: bash
-        run: |
-          if [[ -e /dev/kvm ]]; then
-            echo "KVM is available"
-            ls -l /dev/kvm
-          else
-            echo "::warning::/dev/kvm is unavailable; using software acceleration"
-          fi
 
       - name: Create Android Virtual Device
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          mkdir -p "$ANDROID_USER_HOME"
-          mkdir -p "$ANDROID_AVD_HOME"
+          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
 
           rm -rf "$ANDROID_AVD_HOME/${AVD_NAME}.avd"
           rm -f "$ANDROID_AVD_HOME/${AVD_NAME}.ini"
@@ -177,17 +123,8 @@ jobs:
           AVD_DIR="$ANDROID_AVD_HOME/${AVD_NAME}.avd"
           AVD_CONFIG="$AVD_DIR/config.ini"
 
-          if [[ ! -d "$AVD_DIR" ]]; then
-            echo "AVD directory was not created"
-            find "$ANDROID_USER_HOME" -maxdepth 6 -print || true
-            exit 1
-          fi
-
-          if [[ ! -f "$AVD_CONFIG" ]]; then
-            echo "AVD configuration was not created"
-            find "$ANDROID_USER_HOME" -maxdepth 6 -print || true
-            exit 1
-          fi
+          test -d "$AVD_DIR"
+          test -f "$AVD_CONFIG"
 
           cat >> "$AVD_CONFIG" <<'EOF'
           hw.keyboard=yes
@@ -206,20 +143,16 @@ jobs:
           skin.dynamic=yes
           EOF
 
-          echo "AVD created:"
-          ls -la "$AVD_DIR"
-
-          echo "AVDs visible to emulator:"
+          echo "Available AVDs:"
           emulator -list-avds
 
           if ! emulator -list-avds | grep -Fxq "$AVD_NAME"; then
-            echo "ERROR: emulator cannot see '$AVD_NAME'"
+            echo "AVD is not visible to emulator"
             find "$ANDROID_USER_HOME" -maxdepth 6 -print || true
             exit 1
           fi
 
-      - name: Start Xvfb display
-        shell: bash
+      - name: Start Xvfb
         run: |
           set -Eeuo pipefail
 
@@ -234,23 +167,13 @@ jobs:
           echo "XVFB_PID=$!" >> "$GITHUB_ENV"
 
           sleep 3
-
-          if ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
-            echo "Xvfb failed to start"
-            cat /tmp/xvfb.log
-            exit 1
-          fi
-
-          echo "Xvfb is ready on $DISPLAY"
+          xdpyinfo -display "$DISPLAY" >/dev/null
 
       - name: Start window manager
-        shell: bash
         run: |
           set -Eeuo pipefail
 
-          fluxbox \
-            > /tmp/fluxbox.log 2>&1 &
-
+          fluxbox > /tmp/fluxbox.log 2>&1 &
           echo "FLUXBOX_PID=$!" >> "$GITHUB_ENV"
 
           sleep 2
@@ -260,20 +183,9 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          export ANDROID_AVD_HOME="$ANDROID_AVD_HOME"
-          export ANDROID_USER_HOME="$ANDROID_USER_HOME"
-
-          if ! emulator -list-avds | grep -Fxq "$AVD_NAME"; then
-            echo "AVD '$AVD_NAME' is not visible to emulator"
-            emulator -list-avds || true
-            exit 1
-          fi
-
           adb kill-server || true
           adb start-server
 
-          # -accel off avoids hangs when KVM is unavailable or broken.
-          # Switch to -accel auto after confirming the workflow works.
           emulator \
             -avd "$AVD_NAME" \
             -accel off \
@@ -281,6 +193,7 @@ jobs:
             -no-audio \
             -no-boot-anim \
             -no-snapshot \
+            -wipe-data \
             -camera-back none \
             -camera-front none \
             -netfast \
@@ -305,7 +218,6 @@ jobs:
 
               if ! kill -0 "$1" 2>/dev/null; then
                 echo "Emulator process exited"
-                echo "----- emulator log -----"
                 cat /tmp/emulator.log || true
                 exit 1
               fi
@@ -315,32 +227,74 @@ jobs:
             done
           ' _ "$EMULATOR_PID"
 
-          timeout 300 bash -c '
-            while true; do
-              boot_completed=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r\n" || true)
-              dev_bootcomplete=$(adb shell getprop dev.bootcomplete 2>/dev/null | tr -d "\r\n" || true)
-              boot_animation=$(adb shell getprop init.svc.bootanim 2>/dev/null | tr -d "\r\n" || true)
+          echo "Waiting for Android framework to finish booting..."
 
-              echo "sys.boot_completed=$boot_completed"
-              echo "dev.bootcomplete=$dev_bootcomplete"
-              echo "init.svc.bootanim=$boot_animation"
+          START_TIME=$(date +%s)
+          BOOT_TIMEOUT=300
 
-              if [[ "$boot_completed" == "1" || "$dev_bootcomplete" == "1" ]]; then
-                break
-              fi
+          while true; do
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+              echo "Emulator exited during boot"
+              cat /tmp/emulator.log || true
+              exit 1
+            fi
 
-              sleep 5
-            done
-          '
+            SYS_BOOT_COMPLETED=$(
+              adb shell getprop sys.boot_completed 2>/dev/null |
+              tr -d "\r\n" || true
+            )
 
-          echo "Android boot completed"
+            DEV_BOOT_COMPLETE=$(
+              adb shell getprop dev.bootcomplete 2>/dev/null |
+              tr -d "\r\n" || true
+            )
 
-          timeout 120 bash -c '
-            until adb shell pm path android 2>/dev/null | grep -q "^package:"; do
-              echo "Waiting for Android package manager..."
-              sleep 3
-            done
-          '
+            BOOT_ANIMATION=$(
+              adb shell getprop init.svc.bootanim 2>/dev/null |
+              tr -d "\r\n" || true
+            )
+
+            PACKAGE_MANAGER_READY=$(
+              adb shell pm path android 2>/dev/null |
+              grep -c '^package:' || true
+            )
+
+            echo \
+              "sys.boot_completed=$SYS_BOOT_COMPLETED " \
+              "dev.bootcomplete=$DEV_BOOT_COMPLETE " \
+              "init.svc.bootanim=$BOOT_ANIMATION " \
+              "package_manager=$PACKAGE_MANAGER_READY"
+
+            if [[ "$SYS_BOOT_COMPLETED" == "1" ]] &&
+               [[ "$PACKAGE_MANAGER_READY" -gt 0 ]]; then
+              echo "Android framework is ready"
+              break
+            fi
+
+            NOW=$(date +%s)
+
+            if (( NOW - START_TIME >= BOOT_TIMEOUT )); then
+              echo "Android failed to finish booting"
+
+              echo "----- adb devices -----"
+              adb devices -l || true
+
+              echo "----- boot properties -----"
+              adb shell getprop | grep -E \
+                'boot|zygote|system_server|package|keystore|init.svc' || true
+
+              echo "----- Android processes -----"
+              adb shell ps -A | grep -E \
+                'system_server|zygote|surfaceflinger|package' || true
+
+              echo "----- emulator log -----"
+              cat /tmp/emulator.log || true
+
+              exit 1
+            fi
+
+            sleep 5
+          done
 
           adb shell settings put global window_animation_scale 0 || true
           adb shell settings put global transition_animation_scale 0 || true
@@ -350,7 +304,6 @@ jobs:
           echo "Android emulator is ready"
 
       - name: Verify emulator
-        shell: bash
         run: |
           set -Eeuo pipefail
 
@@ -380,12 +333,9 @@ jobs:
           sleep 3
 
           if ! kill -0 "$X11VNC_PID" 2>/dev/null; then
-            echo "x11vnc failed to start"
             cat /tmp/x11vnc.log
             exit 1
           fi
-
-          echo "VNC server is running"
 
       - name: Install and start noVNC
         shell: bash
@@ -410,7 +360,6 @@ jobs:
           sleep 5
 
           if ! kill -0 "$NOVNC_PID" 2>/dev/null; then
-            echo "noVNC failed to start"
             cat /tmp/novnc.log
             exit 1
           fi
@@ -421,8 +370,6 @@ jobs:
             --max-time 10 \
             http://127.0.0.1:6080/vnc.html \
             >/dev/null
-
-          echo "noVNC is running"
 
       - name: Install Cloudflare Tunnel
         shell: bash
@@ -465,7 +412,6 @@ jobs:
             fi
 
             if ! kill -0 "$CLOUDFLARED_PID" 2>/dev/null; then
-              echo "Cloudflare Tunnel stopped"
               cat /tmp/cloudflared.log
               exit 1
             fi
@@ -474,13 +420,11 @@ jobs:
           done
 
           if [[ -z "$PUBLIC_URL" ]]; then
-            echo "Cloudflare Tunnel failed to start"
             cat /tmp/cloudflared.log
             exit 1
           fi
 
           NOVNC_URL="${PUBLIC_URL}/vnc.html"
-
           echo "NOVNC_URL=$NOVNC_URL" >> "$GITHUB_ENV"
 
           {
@@ -491,12 +435,7 @@ jobs:
             echo "$NOVNC_URL"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          echo
-          echo "=============================================="
-          echo "Open this URL in your browser:"
-          echo "$NOVNC_URL"
-          echo "=============================================="
-          echo
+          echo "noVNC URL: $NOVNC_URL"
 
       - name: Run Android tests
         shell: bash
@@ -506,21 +445,14 @@ jobs:
           echo "Android emulator is running"
           echo "noVNC URL: $NOVNC_URL"
 
-          # Add tests here.
-          #
+          # Add tests here:
           # ./gradlew connectedDebugAndroidTest
-          #
           # adb install app/build/outputs/apk/debug/app-debug.apk
-          #
-          # adb shell am start -n com.example.app/.MainActivity
 
       - name: Keep emulator alive
         shell: bash
         run: |
           set -Eeuo pipefail
-
-          echo "Open this URL while the job is running:"
-          echo "$NOVNC_URL"
 
           for i in {1..270}; do
             if ! adb get-state >/dev/null 2>&1; then
