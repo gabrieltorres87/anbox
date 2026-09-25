@@ -5,6 +5,8 @@ on:
 
 jobs:
   android-emulator:
+    # If KVM is unavailable on this runner, use a larger Linux runner
+    # or a self-hosted runner with nested virtualization enabled.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
@@ -24,13 +26,69 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+
           sudo apt-get update
+
           sudo apt-get install -y \
-            wget curl unzip git xvfb x11vnc x11-utils fluxbox \
-            libpulse0 libglu1-mesa libnss3 libxcomposite1 libxcursor1 \
-            libxi6 libxrandr2 libxtst6 libxdamage1 libxfixes3 libxcb1 \
-            libxcb-cursor0 libxcb-keysyms1 libxcb-render-util0 \
-            libxcb-xinerama0 libxcb-shape0
+            wget \
+            curl \
+            unzip \
+            git \
+            xvfb \
+            x11vnc \
+            x11-utils \
+            fluxbox \
+            libpulse0 \
+            libglu1-mesa \
+            libnss3 \
+            libxcomposite1 \
+            libxcursor1 \
+            libxi6 \
+            libxrandr2 \
+            libxtst6 \
+            libxdamage1 \
+            libxfixes3 \
+            libxcb1 \
+            libxcb-cursor0 \
+            libxcb-keysyms1 \
+            libxcb-render-util0 \
+            libxcb-xinerama0 \
+            libxcb-shape0
+
+      - name: Enable KVM
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          echo "Runner user: $(id -un)"
+          id
+
+          if [[ ! -e /dev/kvm ]]; then
+            echo "::error::/dev/kvm is not available on this runner."
+            echo "Use a runner with hardware virtualization or nested virtualization."
+            exit 1
+          fi
+
+          sudo groupadd --system kvm 2>/dev/null || true
+
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-android-kvm.rules
+
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+          # Apply permissions immediately for the current job.
+          sudo chmod 0666 /dev/kvm
+
+          echo "KVM device:"
+          ls -l /dev/kvm
+
+          if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+            echo "::error::The current user cannot read/write /dev/kvm."
+            exit 1
+          fi
+
+          echo "KVM is available and accessible."
 
       - name: Install Java
         uses: actions/setup-java@v4
@@ -77,13 +135,16 @@ jobs:
             /tmp/android-cmdline-tools/cmdline-tools/. \
             "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
 
+          test -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+
       - name: Accept Android licenses
         shell: bash
         run: |
-          set +o pipefail
+          set -Eeuo pipefail
+
           yes | sdkmanager \
             --sdk_root="$ANDROID_SDK_ROOT" \
-            --licenses
+            --licenses >/dev/null || true
 
       - name: Install Android SDK packages
         shell: bash
@@ -102,7 +163,9 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          mkdir -p "$ANDROID_USER_HOME" "$ANDROID_AVD_HOME"
+          mkdir -p \
+            "$ANDROID_USER_HOME" \
+            "$ANDROID_AVD_HOME"
 
           rm -rf "$ANDROID_AVD_HOME/${AVD_NAME}.avd"
           rm -f "$ANDROID_AVD_HOME/${AVD_NAME}.ini"
@@ -161,6 +224,7 @@ jobs:
           echo "XVFB_PID=$!" >> "$GITHUB_ENV"
 
           sleep 3
+
           xdpyinfo -display "$DISPLAY" >/dev/null
 
       - name: Start window manager
@@ -168,7 +232,9 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          fluxbox > /tmp/fluxbox.log 2>&1 &
+          fluxbox \
+            > /tmp/fluxbox.log 2>&1 &
+
           echo "FLUXBOX_PID=$!" >> "$GITHUB_ENV"
 
           sleep 2
@@ -183,7 +249,7 @@ jobs:
 
           emulator \
             -avd "$AVD_NAME" \
-            -accel auto \
+            -accel on \
             -gpu swiftshader_indirect \
             -no-audio \
             -no-boot-anim \
@@ -260,9 +326,6 @@ jobs:
               "init.svc.bootanim=$BOOT_ANIMATION " \
               "package_manager=$PACKAGE_MANAGER_READY"
 
-            # API 35 images may leave sys.boot_completed and
-            # dev.bootcomplete empty. Package Manager plus stopped
-            # boot animation is sufficient for this workflow.
             if [[ "$PACKAGE_MANAGER_READY" -gt 0 ]] &&
                [[ "$BOOT_ANIMATION" == "stopped" ]]; then
               echo "Android framework is ready"
@@ -427,6 +490,7 @@ jobs:
           fi
 
           NOVNC_URL="${PUBLIC_URL}/vnc.html"
+
           echo "NOVNC_URL=$NOVNC_URL" >> "$GITHUB_ENV"
 
           {
@@ -435,7 +499,7 @@ jobs:
             echo "Open noVNC:"
             echo
             echo "$NOVNC_URL"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } >> "$GITHUB_STEP_SUMMARY
 
           echo "noVNC URL: $NOVNC_URL"
 
