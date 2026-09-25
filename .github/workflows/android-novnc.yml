@@ -411,7 +411,7 @@ jobs:
 
           git clone \
             --depth 1 \
-            https://github.com/novnc/noVNC.git \
+            https://github.com/bitbound/noVNC.git \
             /tmp/noVNC
 
           /tmp/noVNC/utils/novnc_proxy \
