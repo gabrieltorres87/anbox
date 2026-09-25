@@ -12,13 +12,18 @@ jobs:
       ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
       ANDROID_HOME: ${{ github.workspace }}/android-sdk
       DISPLAY: :99
+      AVD_NAME: github-emulator
+      ADB_TARGET: emulator-5554
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install Linux dependencies
+        shell: bash
         run: |
+          set -Eeuo pipefail
+
           sudo apt-get update
 
           sudo apt-get install -y \
@@ -28,7 +33,9 @@ jobs:
             git \
             xvfb \
             x11vnc \
+            x11-utils \
             fluxbox \
+            openjdk-17-jre \
             libpulse0 \
             libglu1-mesa \
             libnss3 \
@@ -46,16 +53,16 @@ jobs:
             libxcb-xinerama0 \
             libxcb-shape0
 
-      - name: Install Java
+      - name: Configure Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Configure Android SDK
+      - name: Configure Android SDK paths
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
 
@@ -63,16 +70,23 @@ jobs:
           echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
           echo "$ANDROID_SDK_ROOT/emulator" >> "$GITHUB_PATH"
 
+          cat >> "$GITHUB_ENV" <<EOF
+          PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator:$PATH
+          EOF
+
       - name: Install Android command-line tools
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
+
+          CMDLINE_VERSION="11076708"
+          CMDLINE_URL="https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_VERSION}_latest.zip"
 
           rm -rf /tmp/android-cmdline-tools
           mkdir -p /tmp/android-cmdline-tools
 
           wget --no-verbose \
-            "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
+            "$CMDLINE_URL" \
             -O /tmp/android-cmdline-tools.zip
 
           unzip -q \
@@ -90,25 +104,12 @@ jobs:
             "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
             "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
 
-          test -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          test -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
-
-      - name: Verify Android command-line tools
-        shell: bash
-        run: |
-          set -e
-
-          command -v sdkmanager
-          command -v avdmanager
-
           sdkmanager --version
           avdmanager version || true
 
       - name: Accept Android SDK licenses
         shell: bash
         run: |
-          # sdkmanager finishes before yes does, causing yes to receive SIGPIPE.
-          # Disable pipefail so that expected Broken pipe output does not fail the job.
           set +o pipefail
 
           yes | sdkmanager \
@@ -120,7 +121,7 @@ jobs:
       - name: Install Android SDK packages
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
           sdkmanager \
             --sdk_root="$ANDROID_SDK_ROOT" \
@@ -132,45 +133,73 @@ jobs:
       - name: Verify Android SDK packages
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
+
+          test -x "$ANDROID_SDK_ROOT/platform-tools/adb"
+          test -x "$ANDROID_SDK_ROOT/emulator/emulator"
+          test -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
 
           sdkmanager \
             --sdk_root="$ANDROID_SDK_ROOT" \
             --list_installed
 
-          test -x "$ANDROID_SDK_ROOT/platform-tools/adb"
-          test -x "$ANDROID_SDK_ROOT/emulator/emulator"
+          emulator -version
+          adb version
 
-          test -d \
-            "$ANDROID_SDK_ROOT/system-images/android-35/google_apis/x86_64"
+      - name: Check KVM acceleration
+        shell: bash
+        run: |
+          if [[ -e /dev/kvm ]]; then
+            echo "KVM acceleration is available"
+            ls -l /dev/kvm
+          else
+            echo "::warning::/dev/kvm is unavailable. Emulator startup may be slow."
+          fi
 
       - name: Create Android Virtual Device
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
           mkdir -p "$HOME/.android/avd"
 
-          rm -rf "$HOME/.android/avd/github-emulator.avd"
-          rm -f "$HOME/.android/avd/github-emulator.ini"
+          rm -rf "$HOME/.android/avd/${AVD_NAME}.avd"
+          rm -f "$HOME/.android/avd/${AVD_NAME}.ini"
 
-          # Do not pass --sdk_root here.
-          # avdmanager uses ANDROID_SDK_ROOT from the job environment.
           echo "no" | avdmanager create avd \
-            --name "github-emulator" \
+            --name "$AVD_NAME" \
             --package "system-images;android-35;google_apis;x86_64" \
             --device "pixel_6" \
             --force
 
-      - name: Verify Android Virtual Device
-        shell: bash
-        run: |
-          set -e
+          AVD_CONFIG="$HOME/.android/avd/${AVD_NAME}.avd/config.ini"
+
+          cat >> "$AVD_CONFIG" <<'EOF'
+          hw.keyboard=yes
+          hw.lcd.width=1280
+          hw.lcd.height=800
+          hw.lcd.density=240
+          hw.gpu.enabled=yes
+          hw.gpu.mode=swiftshader
+          hw.ramSize=2048
+          vm.heapSize=256
+          disk.dataPartition.size=4096M
+          fastboot.forceColdBoot=no
+          fastboot.forceChosenSnapshotBoot=no
+          showDeviceFrame=no
+          skin.dynamic=yes
+          EOF
+
           avdmanager list avd
 
       - name: Start Xvfb display
         shell: bash
         run: |
+          set -Eeuo pipefail
+
+          pkill Xvfb || true
+
           Xvfb "$DISPLAY" \
             -screen 0 1280x800x24 \
             -ac \
@@ -179,54 +208,123 @@ jobs:
             -noreset \
             > /tmp/xvfb.log 2>&1 &
 
+          XVFB_PID=$!
+          echo "XVFB_PID=$XVFB_PID" >> "$GITHUB_ENV"
+
           sleep 3
+
+          if ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+            echo "Xvfb failed to start"
+            cat /tmp/xvfb.log
+            exit 1
+          fi
+
+          echo "Xvfb display $DISPLAY is ready"
 
       - name: Start window manager
         shell: bash
         run: |
-          fluxbox > /tmp/fluxbox.log 2>&1 &
+          set -Eeuo pipefail
+
+          fluxbox \
+            > /tmp/fluxbox.log 2>&1 &
+
+          FLUXBOX_PID=$!
+          echo "FLUXBOX_PID=$FLUXBOX_PID" >> "$GITHUB_ENV"
+
           sleep 2
 
       - name: Start Android Emulator
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
-          nohup emulator \
-            -avd github-emulator \
-            -no-snapshot \
+          adb start-server
+
+          pkill -f "emulator.*${AVD_NAME}" || true
+          pkill -f "qemu-system" || true
+
+          echo "Starting emulator..."
+
+          emulator \
+            -avd "$AVD_NAME" \
+            -accel auto \
+            -gpu swiftshader \
             -no-audio \
             -no-boot-anim \
-            -gpu swiftshader_indirect \
             -camera-back none \
             -camera-front none \
+            -netfast \
+            -memory 2048 \
+            -cores 2 \
             > /tmp/emulator.log 2>&1 &
 
-          adb wait-for-device
+          EMULATOR_PID=$!
+          echo "EMULATOR_PID=$EMULATOR_PID" >> "$GITHUB_ENV"
+
+          echo "Emulator PID: $EMULATOR_PID"
 
           timeout 300 bash -c '
-            until adb shell getprop sys.boot_completed 2>/dev/null | grep -q "1"; do
-              echo "Waiting for Android to boot..."
+            until adb devices | awk "NR > 1 && \$2 == \"device\" { found=1 } END { exit !found }"; do
+              echo "Waiting for emulator ADB connection..."
               sleep 5
+            done
+          '
+
+          echo "ADB device connected"
+
+          timeout 300 bash -c '
+            while true; do
+              boot_completed=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r\n")
+              dev_bootcomplete=$(adb shell getprop dev.bootcomplete 2>/dev/null | tr -d "\r\n")
+              boot_animation=$(adb shell getprop init.svc.bootanim 2>/dev/null | tr -d "\r\n")
+
+              echo "sys.boot_completed=$boot_completed"
+              echo "dev.bootcomplete=$dev_bootcomplete"
+              echo "init.svc.bootanim=$boot_animation"
+
+              if [[ "$boot_completed" == "1" || "$dev_bootcomplete" == "1" ]]; then
+                break
+              fi
+
+              sleep 5
+            done
+          '
+
+          echo "Android boot completed"
+
+          timeout 120 bash -c '
+            until adb shell pm path android 2>/dev/null | grep -q "^package:"; do
+              echo "Waiting for Android package manager..."
+              sleep 3
             done
           '
 
           adb shell settings put global window_animation_scale 0
           adb shell settings put global transition_animation_scale 0
           adb shell settings put global animator_duration_scale 0
+          adb shell input keyevent 82 || true
 
           echo "Android emulator is ready"
 
       - name: Verify emulator
         shell: bash
         run: |
-          adb devices
+          set -Eeuo pipefail
+
+          adb devices -l
           adb shell getprop ro.build.version.release
+          adb shell getprop ro.build.version.sdk
           adb shell getprop ro.product.model
+          adb shell getprop sys.boot_completed
 
       - name: Start VNC server
         shell: bash
         run: |
+          set -Eeuo pipefail
+
+          pkill x11vnc || true
+
           x11vnc \
             -display "$DISPLAY" \
             -rfbport 5900 \
@@ -236,16 +334,28 @@ jobs:
             -listen 127.0.0.1 \
             > /tmp/x11vnc.log 2>&1 &
 
+          X11VNC_PID=$!
+          echo "X11VNC_PID=$X11VNC_PID" >> "$GITHUB_ENV"
+
           sleep 3
+
+          if ! kill -0 "$X11VNC_PID" 2>/dev/null; then
+            echo "x11vnc failed to start"
+            cat /tmp/x11vnc.log
+            exit 1
+          fi
+
+          echo "VNC server is running on port 5900"
 
       - name: Install and start noVNC
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
           rm -rf /tmp/noVNC
 
-          git clone --depth 1 \
+          git clone \
+            --depth 1 \
             https://github.com/novnc/noVNC.git \
             /tmp/noVNC
 
@@ -254,12 +364,34 @@ jobs:
             --listen 6080 \
             > /tmp/novnc.log 2>&1 &
 
+          NOVNC_PID=$!
+          echo "NOVNC_PID=$NOVNC_PID" >> "$GITHUB_ENV"
+
           sleep 5
+
+          if ! kill -0 "$NOVNC_PID" 2>/dev/null; then
+            echo "noVNC failed to start"
+            cat /tmp/novnc.log
+            exit 1
+          fi
+
+          if ! curl \
+            --silent \
+            --fail \
+            --max-time 10 \
+            http://127.0.0.1:6080/vnc.html \
+            >/dev/null; then
+            echo "noVNC HTTP endpoint is unavailable"
+            cat /tmp/novnc.log
+            exit 1
+          fi
+
+          echo "noVNC is running on port 6080"
 
       - name: Install Cloudflare Tunnel
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
           wget --no-verbose \
             "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" \
@@ -267,37 +399,52 @@ jobs:
 
           chmod +x /tmp/cloudflared
 
+          /tmp/cloudflared --version
+
       - name: Start public noVNC tunnel
         shell: bash
         run: |
-          set -e
+          set -Eeuo pipefail
 
           /tmp/cloudflared tunnel \
             --url http://127.0.0.1:6080 \
             --no-autoupdate \
             > /tmp/cloudflared.log 2>&1 &
 
+          CLOUDFLARED_PID=$!
+          echo "CLOUDFLARED_PID=$CLOUDFLARED_PID" >> "$GITHUB_ENV"
+
           PUBLIC_URL=""
 
-          for i in {1..30}; do
-            PUBLIC_URL=$(grep -oE \
-              'https://[-a-zA-Z0-9]+\.trycloudflare\.com' \
-              /tmp/cloudflared.log | head -n 1 || true)
+          for i in {1..60}; do
+            PUBLIC_URL=$(
+              grep -oE \
+                'https://[-a-zA-Z0-9]+\.trycloudflare\.com' \
+                /tmp/cloudflared.log |
+              head -n 1 ||
+              true
+            )
 
-            if [ -n "$PUBLIC_URL" ]; then
+            if [[ -n "$PUBLIC_URL" ]]; then
               break
+            fi
+
+            if ! kill -0 "$CLOUDFLARED_PID" 2>/dev/null; then
+              echo "Cloudflare Tunnel stopped unexpectedly"
+              cat /tmp/cloudflared.log
+              exit 1
             fi
 
             sleep 2
           done
 
-          if [ -z "$PUBLIC_URL" ]; then
+          if [[ -z "$PUBLIC_URL" ]]; then
             echo "Cloudflare Tunnel failed to start"
             cat /tmp/cloudflared.log
             exit 1
           fi
 
-          NOVNC_URL="$PUBLIC_URL/vnc.html"
+          NOVNC_URL="${PUBLIC_URL}/vnc.html"
 
           echo "NOVNC_URL=$NOVNC_URL" >> "$GITHUB_ENV"
 
@@ -311,23 +458,51 @@ jobs:
       - name: Run Android tests
         shell: bash
         run: |
-          echo "Android emulator is running."
+          set -Eeuo pipefail
+
+          echo "Android emulator is running"
           echo "noVNC URL: $NOVNC_URL"
 
-          # Add tests here, for example:
+          # Add Android tests here.
           #
+          # Example:
           # ./gradlew connectedDebugAndroidTest
           #
+          # Example APK installation:
           # adb install app/build/outputs/apk/debug/app-debug.apk
+          #
+          # Example application launch:
           # adb shell am start -n com.example.app/.MainActivity
 
       - name: Keep emulator alive
         shell: bash
         run: |
+          set -Eeuo pipefail
+
           echo "Open this URL while the job is running:"
           echo "$NOVNC_URL"
 
           for i in {1..270}; do
+            if ! adb get-state >/dev/null 2>&1; then
+              echo "Android emulator disconnected"
+              exit 1
+            fi
+
+            if ! curl \
+              --silent \
+              --fail \
+              --max-time 5 \
+              http://127.0.0.1:6080/vnc.html \
+              >/dev/null; then
+              echo "noVNC is unavailable"
+              exit 1
+            fi
+
+            if ! kill -0 "${CLOUDFLARED_PID:-0}" 2>/dev/null; then
+              echo "Cloudflare Tunnel stopped"
+              exit 1
+            fi
+
             sleep 10
           done
 
@@ -336,6 +511,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: android-emulator-logs
+          if-no-files-found: ignore
           path: |
             /tmp/xvfb.log
             /tmp/fluxbox.log
@@ -343,4 +519,3 @@ jobs:
             /tmp/x11vnc.log
             /tmp/novnc.log
             /tmp/cloudflared.log
-          if-no-files-found: ignore
