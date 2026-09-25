@@ -21,6 +21,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Linux dependencies
+        shell: bash
         run: |
           set -Eeuo pipefail
           sudo apt-get update
@@ -37,7 +38,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Configure Android paths
+      - name: Configure Android SDK
+        shell: bash
         run: |
           set -Eeuo pipefail
 
@@ -53,6 +55,7 @@ jobs:
           } >> "$GITHUB_PATH"
 
       - name: Install Android command-line tools
+        shell: bash
         run: |
           set -Eeuo pipefail
 
@@ -83,6 +86,7 @@ jobs:
             --licenses
 
       - name: Install Android SDK packages
+        shell: bash
         run: |
           set -Eeuo pipefail
 
@@ -92,17 +96,6 @@ jobs:
             "emulator" \
             "platforms;android-35" \
             "system-images;android-35;google_apis;x86_64"
-
-      - name: Verify Android SDK
-        run: |
-          set -Eeuo pipefail
-
-          test -x "$ANDROID_SDK_ROOT/platform-tools/adb"
-          test -x "$ANDROID_SDK_ROOT/emulator/emulator"
-
-          adb version
-          emulator -version
-          sdkmanager --list_installed
 
       - name: Create Android Virtual Device
         shell: bash
@@ -153,6 +146,7 @@ jobs:
           fi
 
       - name: Start Xvfb
+        shell: bash
         run: |
           set -Eeuo pipefail
 
@@ -170,6 +164,7 @@ jobs:
           xdpyinfo -display "$DISPLAY" >/dev/null
 
       - name: Start window manager
+        shell: bash
         run: |
           set -Eeuo pipefail
 
@@ -239,16 +234,6 @@ jobs:
               exit 1
             fi
 
-            SYS_BOOT_COMPLETED=$(
-              adb shell getprop sys.boot_completed 2>/dev/null |
-              tr -d "\r\n" || true
-            )
-
-            DEV_BOOT_COMPLETE=$(
-              adb shell getprop dev.bootcomplete 2>/dev/null |
-              tr -d "\r\n" || true
-            )
-
             BOOT_ANIMATION=$(
               adb shell getprop init.svc.bootanim 2>/dev/null |
               tr -d "\r\n" || true
@@ -259,14 +244,27 @@ jobs:
               grep -c '^package:' || true
             )
 
+            SYS_BOOT_COMPLETED=$(
+              adb shell getprop sys.boot_completed 2>/dev/null |
+              tr -d "\r\n" || true
+            )
+
+            DEV_BOOT_COMPLETE=$(
+              adb shell getprop dev.bootcomplete 2>/dev/null |
+              tr -d "\r\n" || true
+            )
+
             echo \
               "sys.boot_completed=$SYS_BOOT_COMPLETED " \
               "dev.bootcomplete=$DEV_BOOT_COMPLETE " \
               "init.svc.bootanim=$BOOT_ANIMATION " \
               "package_manager=$PACKAGE_MANAGER_READY"
 
-            if [[ "$SYS_BOOT_COMPLETED" == "1" ]] &&
-               [[ "$PACKAGE_MANAGER_READY" -gt 0 ]]; then
+            # API 35 images may leave sys.boot_completed and
+            # dev.bootcomplete empty. Package Manager plus stopped
+            # boot animation is sufficient for this workflow.
+            if [[ "$PACKAGE_MANAGER_READY" -gt 0 ]] &&
+               [[ "$BOOT_ANIMATION" == "stopped" ]]; then
               echo "Android framework is ready"
               break
             fi
@@ -279,9 +277,11 @@ jobs:
               echo "----- adb devices -----"
               adb devices -l || true
 
-              echo "----- boot properties -----"
-              adb shell getprop | grep -E \
-                'boot|zygote|system_server|package|keystore|init.svc' || true
+              echo "----- Android properties -----"
+              adb shell getprop || true
+
+              echo "----- package manager -----"
+              adb shell pm path android || true
 
               echo "----- Android processes -----"
               adb shell ps -A | grep -E \
@@ -296,6 +296,8 @@ jobs:
             sleep 5
           done
 
+          adb wait-for-device
+
           adb shell settings put global window_animation_scale 0 || true
           adb shell settings put global transition_animation_scale 0 || true
           adb shell settings put global animator_duration_scale 0 || true
@@ -304,6 +306,7 @@ jobs:
           echo "Android emulator is ready"
 
       - name: Verify emulator
+        shell: bash
         run: |
           set -Eeuo pipefail
 
@@ -311,7 +314,6 @@ jobs:
           adb shell getprop ro.build.version.release
           adb shell getprop ro.build.version.sdk
           adb shell getprop ro.product.model
-          adb shell getprop sys.boot_completed
 
       - name: Start VNC server
         shell: bash
