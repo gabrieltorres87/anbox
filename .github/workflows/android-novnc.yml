@@ -52,45 +52,80 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Configure Android SDK paths
+      - name: Configure Android SDK directories
+        shell: bash
         run: |
+          set -e
+
           mkdir -p "$ANDROID_SDK_ROOT"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
 
           echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
           echo "$ANDROID_SDK_ROOT/emulator" >> "$GITHUB_PATH"
 
       - name: Install Android command-line tools
+        shell: bash
         run: |
-          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          set -e
 
-          wget -q \
+          rm -rf /tmp/android-cmdline-tools
+          mkdir -p /tmp/android-cmdline-tools
+
+          wget --no-verbose \
             "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
             -O /tmp/android-cmdline-tools.zip
 
           unzip -q \
             /tmp/android-cmdline-tools.zip \
-            -d "$ANDROID_SDK_ROOT/cmdline-tools"
+            -d /tmp/android-cmdline-tools
 
-          mv \
-            "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" \
-            "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          rm -rf "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
 
-          test -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          cp -R \
+            /tmp/android-cmdline-tools/cmdline-tools/. \
+            "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
+
+          chmod +x \
+            "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
+
+          test -x \
+            "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+
+          test -x \
+            "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
 
       - name: Verify Android command-line tools
+        shell: bash
         run: |
-          sdkmanager --version
-          avdmanager --help
+          set -e
 
-      - name: Accept Android licenses
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+          command -v sdkmanager
+          command -v avdmanager
+
+          echo "sdkmanager version:"
+          sdkmanager --version
+
+          echo "avdmanager version:"
+          avdmanager version || true
+
+      - name: Accept Android SDK licenses
+        shell: bash
         run: |
           yes | sdkmanager \
             --sdk_root="$ANDROID_SDK_ROOT" \
             --licenses
 
       - name: Install Android SDK packages
+        shell: bash
         run: |
+          set -e
+
           sdkmanager \
             --sdk_root="$ANDROID_SDK_ROOT" \
             "platform-tools" \
@@ -98,17 +133,27 @@ jobs:
             "platforms;android-35" \
             "system-images;android-35;google_apis;x86_64"
 
-      - name: Verify installed SDK packages
+      - name: Verify installed Android packages
+        shell: bash
         run: |
+          set -e
+
           sdkmanager \
             --sdk_root="$ANDROID_SDK_ROOT" \
             --list_installed
 
-          test -d \
-            "$ANDROID_SDK_ROOT/system-images/android-35/google_apis/x86_64"
+          test -x "$ANDROID_SDK_ROOT/platform-tools/adb"
+          test -x "$ANDROID_SDK_ROOT/emulator/emulator"
+          test -d "$ANDROID_SDK_ROOT/system-images/android-35/google_apis/x86_64"
 
       - name: Create Android Virtual Device
+        shell: bash
         run: |
+          set -e
+
+          rm -rf "$HOME/.android/avd/github-emulator.avd"
+          rm -f "$HOME/.android/avd/github-emulator.ini"
+
           echo "no" | avdmanager create avd \
             --name "github-emulator" \
             --package "system-images;android-35;google_apis;x86_64" \
@@ -117,10 +162,12 @@ jobs:
             --sdk_root="$ANDROID_SDK_ROOT"
 
       - name: Verify Android Virtual Device
+        shell: bash
         run: |
           avdmanager list avd
 
       - name: Start Xvfb virtual display
+        shell: bash
         run: |
           Xvfb "$DISPLAY" \
             -screen 0 1280x800x24 \
@@ -133,12 +180,16 @@ jobs:
           sleep 3
 
       - name: Start window manager
+        shell: bash
         run: |
           fluxbox > /tmp/fluxbox.log 2>&1 &
           sleep 2
 
       - name: Start Android Emulator
+        shell: bash
         run: |
+          set -e
+
           nohup emulator \
             -avd github-emulator \
             -no-snapshot \
@@ -164,13 +215,15 @@ jobs:
 
           echo "Android emulator is ready"
 
-      - name: Show emulator information
+      - name: Verify emulator
+        shell: bash
         run: |
           adb devices
           adb shell getprop ro.build.version.release
-          adb shell wm size
+          adb shell getprop ro.product.model
 
       - name: Start VNC server
+        shell: bash
         run: |
           x11vnc \
             -display "$DISPLAY" \
@@ -184,7 +237,12 @@ jobs:
           sleep 3
 
       - name: Install and start noVNC
+        shell: bash
         run: |
+          set -e
+
+          rm -rf /tmp/noVNC
+
           git clone --depth 1 \
             https://github.com/novnc/noVNC.git \
             /tmp/noVNC
@@ -197,19 +255,27 @@ jobs:
           sleep 5
 
       - name: Install Cloudflare Tunnel
+        shell: bash
         run: |
-          wget -q \
+          set -e
+
+          wget --no-verbose \
             "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" \
             -O /tmp/cloudflared
 
           chmod +x /tmp/cloudflared
 
       - name: Start public noVNC tunnel
+        shell: bash
         run: |
+          set -e
+
           /tmp/cloudflared tunnel \
             --url http://127.0.0.1:6080 \
             --no-autoupdate \
             > /tmp/cloudflared.log 2>&1 &
+
+          PUBLIC_URL=""
 
           for i in {1..30}; do
             PUBLIC_URL=$(grep -oE \
@@ -217,42 +283,48 @@ jobs:
               /tmp/cloudflared.log | head -n 1 || true)
 
             if [ -n "$PUBLIC_URL" ]; then
-              echo
-              echo "=============================================="
-              echo "Open this URL in your browser:"
-              echo "$PUBLIC_URL/vnc.html"
-              echo "=============================================="
-              echo
-
-              echo "NOVNC_URL=$PUBLIC_URL/vnc.html" >> "$GITHUB_ENV"
               break
             fi
 
             sleep 2
           done
 
-          if [ -z "${PUBLIC_URL:-}" ]; then
+          if [ -z "$PUBLIC_URL" ]; then
             echo "Cloudflare Tunnel failed to start"
             cat /tmp/cloudflared.log
             exit 1
           fi
 
+          NOVNC_URL="$PUBLIC_URL/vnc.html"
+
+          echo "NOVNC_URL=$NOVNC_URL" >> "$GITHUB_ENV"
+
+          echo
+          echo "=============================================="
+          echo "Open this URL in your browser:"
+          echo "$NOVNC_URL"
+          echo "=============================================="
+          echo
+
       - name: Run Android tests
+        shell: bash
         run: |
           echo "Android emulator is running."
           echo "noVNC URL: $NOVNC_URL"
 
-          # Add your tests here, for example:
+          # Add your application tests here.
           #
+          # Example:
           # ./gradlew connectedDebugAndroidTest
           #
-          # Or install and launch an APK:
+          # Or:
           # adb install app/build/outputs/apk/debug/app-debug.apk
           # adb shell am start -n com.example.app/.MainActivity
 
       - name: Keep emulator alive
+        shell: bash
         run: |
-          echo "Open the following URL while this job is running:"
+          echo "Open this URL while the job is running:"
           echo "$NOVNC_URL"
 
           for i in {1..270}; do
