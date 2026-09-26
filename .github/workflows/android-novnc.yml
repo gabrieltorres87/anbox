@@ -388,7 +388,7 @@ jobs:
             -rfbport 5900 \
             -forever \
             -shared \
-            -nopw \
+            -passwd "12345678" \
             -listen 127.0.0.1 \
             > /tmp/x11vnc.log 2>&1 &
 
