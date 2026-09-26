@@ -6,7 +6,7 @@ on:
 jobs:
   android-emulator:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     env:
       ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
