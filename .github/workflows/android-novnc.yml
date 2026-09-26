@@ -1,4 +1,4 @@
-name: Android Emulator with noVNC
+name: Android Emulator
 
 on:
   workflow_dispatch:
