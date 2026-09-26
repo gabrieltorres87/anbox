@@ -5,8 +5,6 @@ on:
 
 jobs:
   android-emulator:
-    # If KVM is unavailable on this runner, use a larger Linux runner
-    # or a self-hosted runner with nested virtualization enabled.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
@@ -34,11 +32,12 @@ jobs:
             curl \
             unzip \
             git \
-            xterm \
             xvfb \
             x11vnc \
             x11-utils \
-            fluxbox \
+            xfce4 \
+            xfce4-session \
+            dbus-x11 \
             libpulse0 \
             libglu1-mesa \
             libnss3 \
@@ -55,31 +54,6 @@ jobs:
             libxcb-render-util0 \
             libxcb-xinerama0 \
             libxcb-shape0
-
-      - name: Configure Fluxbox terminal menu
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          mkdir -p "$HOME/.fluxbox"
-
-          cat > "$HOME/.fluxbox/menu" <<'EOF'
-          [begin] (Fluxbox)
-
-          [exec] (Open Linux Terminal) {xterm}
-
-          [submenu] (Applications)
-            [exec] (XTerm) {xterm}
-          [end]
-
-          [config] (Configuration)
-            [reconfig] (Reload Fluxbox menu)
-          [end]
-
-          [restart] (Restart Fluxbox)
-          [exit] (Exit)
-          [end]
-          EOF
 
       - name: Enable KVM
         shell: bash
@@ -103,7 +77,6 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-          # Apply permissions immediately for the current job.
           sudo chmod 0666 /dev/kvm
 
           echo "KVM device:"
@@ -253,17 +226,32 @@ jobs:
 
           xdpyinfo -display "$DISPLAY" >/dev/null
 
-      - name: Start window manager
+      - name: Start XFCE desktop
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          fluxbox \
-            > /tmp/fluxbox.log 2>&1 &
+          export DISPLAY="$DISPLAY"
+          export XDG_CONFIG_DIRS="/etc/xdg/xdg-xfce:/etc/xdg"
+          export XDG_CURRENT_DESKTOP=XFCE
+          export XDG_SESSION_DESKTOP=xfce
+          export XDG_SESSION_TYPE=x11
 
-          echo "FLUXBOX_PID=$!" >> "$GITHUB_ENV"
+          dbus-launch --exit-with-session \
+            xfce4-session \
+            > /tmp/xfce.log 2>&1 &
 
-          sleep 2
+          XFCE_PID=$!
+          echo "XFCE_PID=$XFCE_PID" >> "$GITHUB_ENV"
+
+          sleep 5
+
+          if ! kill -0 "$XFCE_PID" 2>/dev/null; then
+            cat /tmp/xfce.log
+            exit 1
+          fi
+
+          xdpyinfo -display "$DISPLAY" >/dev/null
 
       - name: Start Android Emulator
         shell: bash
@@ -579,7 +567,7 @@ jobs:
           if-no-files-found: ignore
           path: |
             /tmp/xvfb.log
-            /tmp/fluxbox.log
+            /tmp/xfce.log
             /tmp/emulator.log
             /tmp/x11vnc.log
             /tmp/novnc.log
