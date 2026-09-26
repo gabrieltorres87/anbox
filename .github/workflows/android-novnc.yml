@@ -56,6 +56,31 @@ jobs:
             libxcb-xinerama0 \
             libxcb-shape0
 
+      - name: Configure Fluxbox terminal menu
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          mkdir -p "$HOME/.fluxbox"
+
+          cat > "$HOME/.fluxbox/menu" <<'EOF'
+          [begin] (Fluxbox)
+
+          [exec] (Open Linux Terminal) {xterm}
+
+          [submenu] (Applications)
+            [exec] (XTerm) {xterm}
+          [end]
+
+          [config] (Configuration)
+            [reconfig] (Reload Fluxbox menu)
+          [end]
+
+          [restart] (Restart Fluxbox)
+          [exit] (Exit)
+          [end]
+          EOF
+
       - name: Enable KVM
         shell: bash
         run: |
