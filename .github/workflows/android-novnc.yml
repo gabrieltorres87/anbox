@@ -426,6 +426,7 @@ jobs:
 
           git clone \
             --depth 1 \
+            --branch touchpad-mode \
             https://github.com/bitbound/noVNC.git \
             /tmp/noVNC
 
