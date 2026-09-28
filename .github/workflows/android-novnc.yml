@@ -536,7 +536,7 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          for i in {1..270}; do
+          for i in {1..540}; do
             if ! adb get-state >/dev/null 2>&1; then
               echo "Android emulator disconnected"
               exit 1
